@@ -10,11 +10,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
-<<<<<<< HEAD
     "firebase": "^12.15.0",
     "leaflet": "^1.9.4",
-=======
->>>>>>> 2f1ce80 (Initial commit: Firebase setup and NeuroUrbana)
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
   },

@@ -14,7 +14,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: npm ci && npm run build
-<<<<<<< HEAD
         env:
           VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
           VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
@@ -22,14 +21,8 @@ jobs:
           VITE_FIREBASE_DATABASE_URL: ${{ secrets.VITE_FIREBASE_DATABASE_URL }}
           VITE_FIREBASE_STORAGE_BUCKET: ${{ secrets.VITE_FIREBASE_STORAGE_BUCKET }}
           VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
-=======
->>>>>>> 2f1ce80 (Initial commit: Firebase setup and NeuroUrbana)
       - uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: ${{ secrets.GITHUB_TOKEN }}
           firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_IAETHICS_NEUROURBANA }}
-<<<<<<< HEAD
           projectId: iaethics-neurourbana
-=======
-          projectId: iaethics-neurourbana
->>>>>>> 2f1ce80 (Initial commit: Firebase setup and NeuroUrbana)
