@@ -71,6 +71,11 @@ function coordsDaSub(sub) {
   return SUBPREF_COORDS[sub] || SUBPREF_COORDS["Sé"];
 }
 
+function abrirView360(sub) {
+  const [lat, lng] = coordsDaSub(sub);
+  window.open(`https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${lat},${lng}`, "_blank", "noopener,noreferrer");
+}
+
 const TIPOS = ["Calçada","Inundação","Vegetação","Limpeza","Acessibilidade","Pavimentação","Segurança"];
 const STATUSES = ["Aberta","Em andamento","Concluída","Crítica"];
 const TIPO_ICON = { Calçada:"🔲",Inundação:"💧",Vegetação:"🌳",Limpeza:"🧹",Acessibilidade:"♿",Pavimentação:"🔧",Segurança:"🚨" };
@@ -177,12 +182,6 @@ function resolverSubprefeitura(raw) {
   return achado ? achado.p : "Sé";
 }
 
-function parseCoord(v) {
-  if (v===undefined||v===null||v==="") return null;
-  const n = parseFloat(String(v).trim().replace(",","."));
-  return Number.isFinite(n) ? n : null;
-}
-
 // ══════════════════════════════════════════════════
 // PARSER CSV
 // ══════════════════════════════════════════════════
@@ -212,11 +211,7 @@ async function carregarSP156() {
       else if (/andamento/i.test(statusRaw)) status="Em andamento";
       const subRaw = row["Prefeitura Operacional"]||row["Distrito"]||"Sé";
       const sub = resolverSubprefeitura(subRaw);
-      const [latSub,lngSub] = coordsDaSub(sub);
-      const latCsv = parseCoord(row["latitude"]);
-      const lngCsv = parseCoord(row["longitude"]);
-      const lat = latCsv!==null ? latCsv : latSub;
-      const lng = lngCsv!==null ? lngCsv : lngSub;
+      const [lat,lng] = coordsDaSub(sub);
       resultado.push({
         id:resultado.length+1, sub,
         end:`${row["Logradouro"]||""}, ${row["Número"]||"s/n"} - ${row["Bairro"]||""}`,
@@ -369,117 +364,79 @@ function LocalizacaoModal({end,sub,onClose}) {
 }
 
 // ══════════════════════════════════════════════════
-// MODAL VIEW-360 — Google Street View embutido
-// ══════════════════════════════════════════════════
-function View360Modal({lat,lng,onClose}) {
-  const KEY = import.meta.env.VITE_GOOGLE_MAPS_EMBED_KEY || "";
-  const embedUrl = `https://www.google.com/maps/embed/v1/streetview?key=${KEY}&location=${lat},${lng}&fov=90`;
-  const linkExterno = `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${lat},${lng}`;
-  return (
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.75)",backdropFilter:"blur(4px)",zIndex:9500,display:"flex",alignItems:"center",justifyContent:"center"}} onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div style={{background:C.card,border:`1px solid ${C.borda}`,borderRadius:14,width:1050,maxWidth:"94vw",padding:16}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-          <div style={{fontSize:14,fontWeight:700,color:C.txt}}>👁 View-360</div>
-          <button onClick={onClose} style={{background:"rgba(255,255,255,.06)",border:"none",borderRadius:6,color:C.txt2,width:28,height:28,cursor:"pointer",fontSize:15}}>✕</button>
-        </div>
-        {KEY ? (
-          <iframe title="Street View" src={embedUrl} style={{width:"100%",height:624,border:0,borderRadius:10}} loading="lazy" allowFullScreen referrerPolicy="no-referrer-when-downgrade"/>
-        ) : (
-          <div style={{width:"100%",height:624,borderRadius:10,background:"#0a0e18",border:`1px solid ${C.borda}`,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:10,textAlign:"center",padding:24}}>
-            <div style={{fontSize:32}}>👁</div>
-            <div style={{fontSize:13,color:C.txt2,maxWidth:440,lineHeight:1.6}}>
-              Para ver o Street View aqui dentro, configure a variável <strong style={{color:C.txt}}>VITE_GOOGLE_MAPS_EMBED_KEY</strong> com uma chave da <strong style={{color:C.txt}}>Maps Embed API</strong> do Google Cloud (gratuita, uso ilimitado — só precisa de uma chave restrita a essa API).
-            </div>
-          </div>
-        )}
-        <div style={{fontSize:10,color:C.txt2,marginTop:8,display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
-          <span>📍 Imagem aproximada do local (Google Street View).</span>
-          <a href={linkExterno} target="_blank" rel="noreferrer" style={{color:C.ciano,textDecoration:"none",whiteSpace:"nowrap"}}>Abrir no Google Maps ↗</a>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ══════════════════════════════════════════════════
 // MAPA SVG INTERATIVO
 // ══════════════════════════════════════════════════
 function MapaSP({ocorrencias,selectedId,onSelect,filtSub,filtTipo,filtStatus}) {
-  const mapDivRef=useRef(null);
-  const mapObjRef=useRef(null);
-  const grupoMarcadoresRef=useRef(null);
+  const [zoom,setZoom]=useState(1);
+  const [pan,setPan]=useState({x:0,y:0});
+  const [dragging,setDragging]=useState(false);
+  const [lastPos,setLastPos]=useState(null);
+  const [hovered,setHovered]=useState(null);
   const [showLocModal,setShowLocModal]=useState(false);
-  const [showView360Modal,setShowView360Modal]=useState(false);
 
   const filtered=ocorrencias.filter(o=>
     (!filtSub||filtSub==="Todas"||o.sub===filtSub)&&
     (!filtTipo||o.tipo===filtTipo)&&
     (!filtStatus||o.status===filtStatus)
   );
+
+  const onMouseDown=e=>{ setDragging(true); setLastPos({x:e.clientX,y:e.clientY}); };
+  const onMouseMove=e=>{ if(!dragging||!lastPos) return; setPan(p=>({x:p.x+(e.clientX-lastPos.x),y:p.y+(e.clientY-lastPos.y)})); setLastPos({x:e.clientX,y:e.clientY}); };
+  const onMouseUp=()=>{ setDragging(false); setLastPos(null); };
+  const handleWheel=e=>{ e.preventDefault(); setZoom(z=>Math.max(0.6,Math.min(3,z-e.deltaY*0.001))); };
+  const resetView=()=>{ setZoom(1); setPan({x:0,y:0}); };
+  const hovOc=hovered?ocorrencias.find(o=>o.id===hovered):null;
   const selOc=selectedId?ocorrencias.find(o=>o.id===selectedId):null;
-  const idsFiltrados=filtered.slice(0,500).map(o=>o.id).join(",");
-
-  // Cria o mapa (tiles escuros CartoDB, sem necessidade de chave) uma única vez
-  useEffect(()=>{
-    if(!mapDivRef.current||mapObjRef.current) return;
-    const map=L.map(mapDivRef.current,{zoomControl:false,attributionControl:false}).setView([-23.5505,-46.6333],11);
-    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",{
-      attribution:"&copy; OpenStreetMap &copy; CARTO", subdomains:"abcd", maxZoom:19
-    }).addTo(map);
-    grupoMarcadoresRef.current=L.layerGroup().addTo(map);
-    mapObjRef.current=map;
-    return ()=>{ map.remove(); mapObjRef.current=null; grupoMarcadoresRef.current=null; };
-  },[]);
-
-  const resetView=()=>{
-    const map=mapObjRef.current; if(!map) return;
-    const validos=filtered.filter(oc=>Number.isFinite(oc.lat)&&Number.isFinite(oc.lng));
-    if(validos.length){
-      map.fitBounds(L.latLngBounds(validos.map(oc=>[oc.lat,oc.lng])),{padding:[40,40],maxZoom:14});
-    } else {
-      map.setView([-23.5505,-46.6333],11);
-    }
-  };
-
-  // Redesenha os marcadores quando o conjunto filtrado ou a seleção muda
-  useEffect(()=>{
-    const map=mapObjRef.current, grupo=grupoMarcadoresRef.current;
-    if(!map||!grupo) return;
-    grupo.clearLayers();
-    const validos=filtered.slice(0,500).filter(oc=>Number.isFinite(oc.lat)&&Number.isFinite(oc.lng));
-    validos.forEach(oc=>{
-      const isAlerta=oc.vezes>=3, isSelected=selectedId===oc.id;
-      const cor=isAlerta?C.alerta:STATUS_COR[oc.status]||C.txt2;
-      const d=isSelected?30:isAlerta?26:22;
-      const icone=L.divIcon({
-        className:"marcador-oc",
-        html:`<div style="width:${d}px;height:${d}px;border-radius:50%;background:${cor}dd;border:${isSelected?3:2}px solid ${isSelected?"#fff":cor};display:flex;align-items:center;justify-content:center;font-size:${Math.round(d*0.5)}px;box-shadow:${isAlerta?`0 0 0 6px ${cor}33`:"0 2px 6px rgba(0,0,0,.4)"}">${isAlerta?"⚠":TIPO_ICON[oc.tipo]}</div>`,
-        iconSize:[d,d], iconAnchor:[d/2,d/2]
-      });
-      const marker=L.marker([oc.lat,oc.lng],{icon:icone});
-      marker.bindTooltip(
-        `<div style="font-size:10px;color:${C.txt2};text-transform:uppercase;letter-spacing:.5px">${TIPO_ICON[oc.tipo]} ${oc.tipo}</div><div style="font-size:12px;font-weight:700;margin:3px 0;color:${C.txt}">${oc.end.slice(0,44)}</div>`,
-        {direction:"top",offset:[0,-d/2],opacity:0.97,className:"tooltip-oc"}
-      );
-      marker.on("click",()=>onSelect(oc.id));
-      marker.addTo(grupo);
-    });
-  },[idsFiltrados,selectedId]);
-
-  // Ajusta o enquadramento quando os filtros mudam ou os dados terminam de carregar
-  useEffect(()=>{ resetView(); },[filtSub,filtTipo,filtStatus,ocorrencias.length]);
 
   return (
-    <div style={{width:"100%",height:"100%",background:C.bg,position:"relative",overflow:"hidden"}}>
-      <div ref={mapDivRef} style={{width:"100%",height:"100%"}}/>
+    <div style={{width:"100%",height:"100%",background:C.bg,position:"relative",overflow:"hidden",cursor:dragging?"grabbing":"grab"}}
+      onWheel={handleWheel} onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseLeave={onMouseUp}>
+      <svg width="100%" height="100%" viewBox="0 0 600 480"
+        style={{transform:`translate(${pan.x}px,${pan.y}px) scale(${zoom})`,transformOrigin:"center",transition:dragging?"none":"transform .1s"}}>
+        <defs>
+          <pattern id="grid" width="30" height="30" patternUnits="userSpaceOnUse">
+            <path d="M 30 0 L 0 0 0 30" fill="none" stroke="#0f1a2e" strokeWidth="0.5"/>
+          </pattern>
+        </defs>
+        <rect width="600" height="480" fill="url(#grid)"/>
+        <g opacity="0.15">
+          <ellipse cx="300" cy="250" rx="260" ry="200" fill="none" stroke="#1d6fa4" strokeWidth="1"/>
+          <line x1="300" y1="80" x2="300" y2="420" stroke="#1e2a42" strokeWidth="0.8" strokeDasharray="4,4"/>
+          <line x1="100" y1="250" x2="500" y2="250" stroke="#1e2a42" strokeWidth="0.8" strokeDasharray="4,4"/>
+        </g>
+        {filtered.slice(0,500).map(oc=>{
+          const isAlerta=oc.vezes>=3, isSelected=selectedId===oc.id;
+          const cor=isAlerta?C.alerta:STATUS_COR[oc.status]||C.txt2;
+          const r=isSelected?12:isAlerta?10:8;
+          const x=150+(oc.id*37)%460, y=80+(oc.id*53)%360;
+          return (
+            <g key={oc.id} onClick={()=>onSelect(oc.id)} onMouseEnter={()=>setHovered(oc.id)} onMouseLeave={()=>setHovered(null)} style={{cursor:"pointer"}}>
+              {isAlerta&&<circle cx={x} cy={y} r={18} fill={`${C.alerta}22`} style={{animation:"pulseR 1.5s ease infinite"}}/>}
+              {isSelected&&<circle cx={x} cy={y} r={16} fill="none" stroke={cor} strokeWidth="2" opacity="0.5"/>}
+              <circle cx={x} cy={y} r={r} fill={`${cor}dd`} stroke={isSelected?"#fff":cor} strokeWidth={isSelected?2:1}/>
+              <text x={x} y={y+1} textAnchor="middle" dominantBaseline="middle" fontSize="8" fill="#fff" style={{pointerEvents:"none"}}>
+                {isAlerta?"⚠":TIPO_ICON[oc.tipo]}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
 
-      <div style={{position:"absolute",bottom:16,right:16,display:"flex",flexDirection:"column",gap:6,zIndex:500}}>
-        <button onClick={()=>mapObjRef.current&&mapObjRef.current.zoomIn()} style={{...s.btn,background:C.card2,color:C.txt,border:`1px solid ${C.borda}`,width:36,height:36,fontSize:18,padding:0}}>+</button>
-        <button onClick={()=>mapObjRef.current&&mapObjRef.current.zoomOut()} style={{...s.btn,background:C.card2,color:C.txt,border:`1px solid ${C.borda}`,width:36,height:36,fontSize:18,padding:0}}>−</button>
+      {hovOc&&(
+        <div style={{position:"absolute",top:16,left:"50%",transform:"translateX(-50%)",background:`${C.card}f0`,border:`1px solid ${C.borda}`,borderRadius:10,padding:"10px 14px",pointerEvents:"none",zIndex:100,minWidth:220,maxWidth:300}}>
+          <div style={{fontSize:10,color:C.txt2,textTransform:"uppercase",letterSpacing:".5px"}}>{TIPO_ICON[hovOc.tipo]} {hovOc.tipo}</div>
+          <div style={{fontSize:13,fontWeight:700,margin:"4px 0"}}>{hovOc.end.slice(0,44)}</div>
+          <div style={{display:"flex",gap:6}}><StatusTag status={hovOc.status}/></div>
+        </div>
+      )}
+
+      <div style={{position:"absolute",bottom:16,right:16,display:"flex",flexDirection:"column",gap:6}}>
+        <button onClick={()=>setZoom(z=>Math.min(3,z+0.3))} style={{...s.btn,background:C.card2,color:C.txt,border:`1px solid ${C.borda}`,width:36,height:36,fontSize:18,padding:0}}>+</button>
+        <button onClick={()=>setZoom(z=>Math.max(0.6,z-0.3))} style={{...s.btn,background:C.card2,color:C.txt,border:`1px solid ${C.borda}`,width:36,height:36,fontSize:18,padding:0}}>−</button>
         <button onClick={resetView} style={{...s.btn,background:C.card2,color:C.txt2,border:`1px solid ${C.borda}`,width:36,height:36,fontSize:12,padding:0}}>⊙</button>
       </div>
 
-      <div style={{position:"absolute",bottom:16,left:16,background:`${C.card}ee`,border:`1px solid ${C.borda}`,borderRadius:10,padding:"10px 12px",fontSize:11,zIndex:500}}>
+      <div style={{position:"absolute",bottom:16,left:16,background:`${C.card}ee`,border:`1px solid ${C.borda}`,borderRadius:10,padding:"10px 12px",fontSize:11}}>
         <div style={{fontSize:9,fontWeight:700,color:C.txt2,textTransform:"uppercase",letterSpacing:".8px",marginBottom:6}}>Legenda</div>
         {[["#ef4444","Aberta"],["#f59e0b","Em andamento"],["#00c47a","Concluída"],["#ff3b30","Crítica"]].map(([c,l])=>(
           <div key={l} style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
@@ -492,11 +449,11 @@ function MapaSP({ocorrencias,selectedId,onSelect,filtSub,filtTipo,filtStatus}) {
         </div>
       </div>
 
-      <div style={{position:"absolute",top:16,right:16,display:"flex",gap:6,zIndex:500}}>
+      <div style={{position:"absolute",top:16,right:16,display:"flex",gap:6}}>
         <button onClick={()=>setShowLocModal(true)} style={{...s.btn,background:"#1a2033",border:`1px solid ${C.borda}`,color:C.txt,display:"flex",alignItems:"center",gap:5}}>
           📍 Localização
         </button>
-        <button onClick={()=>setShowView360Modal(true)} style={{...s.btn,background:"#1a2033",border:`1px solid ${C.borda}`,color:C.txt2,display:"flex",alignItems:"center",gap:5}}>
+        <button onClick={()=>abrirView360(selOc?.sub||"Sé")} style={{...s.btn,background:"#1a2033",border:`1px solid ${C.borda}`,color:C.txt2,display:"flex",alignItems:"center",gap:5}}>
           👁 View-360
         </button>
       </div>
@@ -504,21 +461,10 @@ function MapaSP({ocorrencias,selectedId,onSelect,filtSub,filtTipo,filtStatus}) {
       {showLocModal&&(
         <LocalizacaoModal end={selOc?.end||"Centro de São Paulo"} sub={selOc?.sub||"Sé"} onClose={()=>setShowLocModal(false)}/>
       )}
-      {showView360Modal&&(
-        <View360Modal
-          lat={Number.isFinite(selOc?.lat)?selOc.lat:coordsDaSub(selOc?.sub||"Sé")[0]}
-          lng={Number.isFinite(selOc?.lng)?selOc.lng:coordsDaSub(selOc?.sub||"Sé")[1]}
-          onClose={()=>setShowView360Modal(false)}
-        />
-      )}
 
       <style>{`
         @keyframes pulseR{0%,100%{transform:scale(1);opacity:0.6}50%{transform:scale(1.4);opacity:0.2}}
         @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
-        .leaflet-container{background:${C.bg};font-family:Inter,system-ui,sans-serif;}
-        .marcador-oc{background:transparent;border:none;}
-        .tooltip-oc{background:${C.card}f0 !important;border:1px solid ${C.borda} !important;border-radius:10px !important;padding:8px 10px !important;box-shadow:0 8px 24px rgba(0,0,0,.5) !important;}
-        .leaflet-tooltip-top.tooltip-oc::before{border-top-color:${C.borda} !important;}
       `}</style>
     </div>
   );
@@ -529,7 +475,6 @@ function MapaSP({ocorrencias,selectedId,onSelect,filtSub,filtTipo,filtStatus}) {
 // ══════════════════════════════════════════════════
 function DetalheOc({oc,onClose}) {
   const [showLocModal,setShowLocModal]=useState(false);
-  const [showView360Modal,setShowView360Modal]=useState(false);
   if(!oc) return (
     <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:C.txt2,fontSize:13,textAlign:"center",padding:16}}>
       <div><div style={{fontSize:32,marginBottom:12}}>🗺</div><div>Clique numa ocorrência no mapa ou na lista</div></div>
@@ -563,18 +508,11 @@ function DetalheOc({oc,onClose}) {
         <button onClick={()=>setShowLocModal(true)} style={{...s.btn,background:"#0f2744",border:`1px solid rgba(29,111,164,.4)`,color:C.txt,display:"flex",alignItems:"center",gap:6,justifyContent:"center",fontSize:12}}>
           📍 Localização
         </button>
-        <button onClick={()=>setShowView360Modal(true)} style={{...s.btn,background:"#0a1020",border:`1px solid ${C.borda}`,color:C.txt2,display:"flex",alignItems:"center",gap:6,justifyContent:"center",fontSize:12}}>
+        <button onClick={()=>abrirView360(oc.sub)} style={{...s.btn,background:"#0a1020",border:`1px solid ${C.borda}`,color:C.txt2,display:"flex",alignItems:"center",gap:6,justifyContent:"center",fontSize:12}}>
           👁 View-360
         </button>
       </div>
       {showLocModal&&<LocalizacaoModal end={oc.end} sub={oc.sub} onClose={()=>setShowLocModal(false)}/>}
-      {showView360Modal&&(
-        <View360Modal
-          lat={Number.isFinite(oc.lat)?oc.lat:coordsDaSub(oc.sub)[0]}
-          lng={Number.isFinite(oc.lng)?oc.lng:coordsDaSub(oc.sub)[1]}
-          onClose={()=>setShowView360Modal(false)}
-        />
-      )}
     </div>
   );
 }
@@ -651,7 +589,6 @@ function Modal({onClose,onSave,aiDiag,onAiDiag,aiLoading}) {
 function TabZeladoria({ocorrencias,onAiSubpref}) {
   const [sub,setSub]=useState("Sé");
   const [locModalOc,setLocModalOc]=useState(null);
-  const [view360Oc,setView360Oc]=useState(null);
   const ocs=ocorrencias.filter(o=>o.sub===sub).sort((a,b)=>b.vezes-a.vezes);
   const alerta=ocs.filter(o=>o.vezes>=3);
 
@@ -699,7 +636,7 @@ function TabZeladoria({ocorrencias,onAiSubpref}) {
                   <td style={{padding:"7px 8px",color:C.txt2}}>{new Date(o.data).toLocaleDateString("pt-BR")}</td>
                   <td style={{padding:"7px 8px",whiteSpace:"nowrap"}}>
                     <button onClick={()=>setLocModalOc(o)} style={{background:"none",border:"none",color:C.verde,fontSize:11,cursor:"pointer",marginRight:6,padding:0}}>📍</button>
-                    <button onClick={()=>setView360Oc(o)} style={{background:"none",border:"none",color:C.ciano,fontSize:11,cursor:"pointer",padding:0}}>👁</button>
+                    <button onClick={()=>abrirView360(o.sub)} style={{background:"none",border:"none",color:C.ciano,fontSize:11,cursor:"pointer",padding:0}}>👁</button>
                   </td>
                 </tr>
               ))}
@@ -717,13 +654,6 @@ function TabZeladoria({ocorrencias,onAiSubpref}) {
         </button>
       </div>
       {locModalOc&&<LocalizacaoModal end={locModalOc.end} sub={locModalOc.sub} onClose={()=>setLocModalOc(null)}/>}
-      {view360Oc&&(
-        <View360Modal
-          lat={Number.isFinite(view360Oc.lat)?view360Oc.lat:coordsDaSub(view360Oc.sub)[0]}
-          lng={Number.isFinite(view360Oc.lng)?view360Oc.lng:coordsDaSub(view360Oc.sub)[1]}
-          onClose={()=>setView360Oc(null)}
-        />
-      )}
     </div>
   );
 }
