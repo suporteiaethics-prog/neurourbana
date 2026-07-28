@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { initializeApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut } from "firebase/auth";
+import { getFirestore, collection, query, where, getDocs } from "firebase/firestore";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
@@ -14,6 +15,7 @@ const FIREBASE_CONFIG = {
 
 const firebaseApp = initializeApp(FIREBASE_CONFIG);
 const auth = getAuth(firebaseApp);
+const db = getFirestore(firebaseApp);
 
 // ══════════════════════════════════════════════════
 // SUBPREFEITURAS — 32 oficiais de São Paulo
@@ -259,17 +261,40 @@ function LoginScreen({onLoginSuccess}) {
   const [loading,setLoading]=useState(false);
   const [erro,setErro]=useState("");
   const [imgSrc,setImgSrc]=useState("/imagem_tela_login.jpg");
-
+  
   const handleImgError=()=>{ if(imgSrc.endsWith(".jpg")) setImgSrc("/imagem_tela_login.png"); };
 
   const handleGoogleLogin=async()=>{
-    setErro(""); setLoading(true);
-    try {
-      const provider=new GoogleAuthProvider();
-      const result=await signInWithPopup(auth,provider);
-      onLoginSuccess({email:result.user.email,displayName:result.user.displayName||result.user.email.split("@")[0]});
-    } catch(e) { setErro("❌ Erro ao fazer login: "+e.message); setLoading(false); }
-  };
+  setErro(""); setLoading(true);
+  try {
+    const provider=new GoogleAuthProvider();
+    const result=await signInWithPopup(auth,provider);
+    const email=result.user.email;
+
+    const q=query(collection(db,"contas"), where("email_responsavel","==",email));
+    const snap=await getDocs(q);
+
+    if(snap.empty){
+      await signOut(auth);
+      setErro("❌ Não encontramos uma conta ativa para este e-mail. Fale com o suporte NeuroUrbana.");
+      setLoading(false);
+      return;
+    }
+
+    const conta=snap.docs[0].data();
+    const licencaValida=conta.status_licenca==="valida" && conta.ativo!==false;
+
+    if(!licencaValida){
+      await signOut(auth);
+      const motivo=conta.status_licenca==="expirada"?"expirada":"inativa";
+      setErro(`❌ Sua licença está ${motivo}. Fale com o suporte NeuroUrbana para renovar.`);
+      setLoading(false);
+      return;
+    }
+
+    onLoginSuccess({email,displayName:result.user.displayName||email.split("@")[0]});
+  } catch(e) { setErro("❌ Erro ao fazer login: "+e.message); setLoading(false); }
+};
 
   return (
     <div style={{position:"relative",height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"Inter,sans-serif",color:C.txt,overflow:"hidden"}}>
